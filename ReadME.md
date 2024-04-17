@@ -6,7 +6,6 @@
 ![Image text](./examples_results/test_pair/gen_00013.jpg)
 ![Image text](./examples_results/test_pair/gen_00014.jpg)
 
-### Our FPMT test code and pre trained model, L=3, with a resolution of 512 * 512 images
 
 ### Requirements
 
