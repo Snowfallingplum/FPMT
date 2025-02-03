@@ -6,9 +6,11 @@ dependencies:
   - python=3.8.5
   - pip=20.3
   - cudatoolkit=11.0
-  - pytorch=1.7.0
-  - torchvision=0.8.1
-  - numpy=1.19.2
+  - pytorch
+  - torchvision
+  - numpy
   - pip:
     - opencv-python==4.1.2.30
     - imageio==2.9.0
+    - dlib==19.24.2
+    

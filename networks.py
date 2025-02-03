@@ -185,18 +185,14 @@ class FeatureExtractor(nn.Module):
         self.block = nn.Sequential(
             nn.Conv2d(self.input_dim, 64, kernel_size=3, padding=1, stride=1),
             nn.LeakyReLU(negative_slope=0.2, inplace=True),
-            nn.Conv2d(64, 64, kernel_size=3, padding=1, stride=1),
-            nn.LeakyReLU(negative_slope=0.2, inplace=True),
-            nn.Conv2d(64, 64, kernel_size=3, padding=1, stride=1),
-            nn.LeakyReLU(negative_slope=0.2, inplace=True),
-            nn.Conv2d(64, 64, kernel_size=3, padding=1, stride=1)
+            ResidualBlock(64,norm=False),
+            ResidualBlock(64,norm=False),
         )
 
     def forward(self, x, x_parse):
         out = torch.cat([x, x_parse], dim=1)
         out = self.block(out)
         return out
-
 
 class SemanticExtractor(nn.Module):
     """
@@ -206,24 +202,24 @@ class SemanticExtractor(nn.Module):
     def __init__(self, parse_dim):
         super(SemanticExtractor, self).__init__()
         self.parse_dim = parse_dim
-        ngf = 32
-        self.conv_1 = nn.Sequential(
+        ngf=32
+        self.conv_1=nn.Sequential(
             nn.Conv2d(self.parse_dim + 2, ngf, kernel_size=3, padding=1, stride=2),
             nn.LeakyReLU(negative_slope=0.2, inplace=True))
 
         self.conv_2 = nn.Sequential(
-            nn.Conv2d(ngf, ngf * 2, kernel_size=3, padding=1, stride=2),
+            nn.Conv2d(ngf, ngf*2, kernel_size=3, padding=1, stride=2),
             nn.LeakyReLU(negative_slope=0.2, inplace=True))
 
         self.conv_3 = nn.Sequential(
-            nn.Conv2d(ngf * 2, ngf * 4, kernel_size=3, padding=1, stride=2),
+            nn.Conv2d(ngf*2, ngf*4, kernel_size=3, padding=1, stride=2),
             nn.LeakyReLU(negative_slope=0.2, inplace=True))
 
         self.conv_4 = nn.Sequential(
             nn.Conv2d(ngf * 4, ngf * 4, kernel_size=3, padding=1, stride=2),
             nn.LeakyReLU(negative_slope=0.2, inplace=True))
 
-        self.upsampling = nn.UpsamplingBilinear2d(scale_factor=2)
+        self.upsampling=nn.UpsamplingBilinear2d(scale_factor=2)
 
         self.deconv_1 = nn.Sequential(
             nn.Conv2d(ngf * 4, ngf * 2, kernel_size=3, padding=1, stride=1),
@@ -232,6 +228,8 @@ class SemanticExtractor(nn.Module):
         self.deconv_2 = nn.Sequential(
             nn.Conv2d(ngf * 2, ngf * 2, kernel_size=3, padding=1, stride=1),
             nn.LeakyReLU(negative_slope=0.2, inplace=True))
+
+
 
     def connect_coordinates(self, input_x):
         x_range = torch.linspace(-1, 1, input_x.shape[-1], device=input_x.device)
@@ -244,14 +242,14 @@ class SemanticExtractor(nn.Module):
         return output
 
     def forward(self, x_parse):
-        x_parse = F.interpolate(x_parse, size=(256, 256), mode='nearest')
+        x_parse = F.interpolate(x_parse, size=(256, 256),mode='nearest')
         out = self.connect_coordinates(x_parse)
-        conv_1 = self.conv_1(out)
-        conv_2 = self.conv_2(conv_1)
+        conv_1=self.conv_1(out)
+        conv_2= self.conv_2(conv_1)
         conv_3 = self.conv_3(conv_2)
         conv_4 = self.conv_4(conv_3)
-        deconv_1 = self.deconv_1(self.upsampling(conv_4) + conv_3)
-        deconv_2 = self.deconv_2(self.upsampling(deconv_1) + conv_2)
+        deconv_1=self.deconv_1(self.upsampling(conv_4)+conv_3)
+        deconv_2=self.deconv_2(self.upsampling(deconv_1)+conv_2)
         return deconv_2
 
 
@@ -264,7 +262,8 @@ class LocalSemanticAlignment(nn.Module):
         super(LocalSemanticAlignment, self).__init__()
         self.softmax_alpha = 100
 
-    def warp(self, unalign_fb, fa, fa_parse, fb, fb_parse, alpha):
+
+    def warp(self, unalign_fb, fa,fa_parse, fb, fb_parse,alpha):
         '''
             calculate correspondence matrix and warp the exemplar features
         '''
@@ -278,45 +277,143 @@ class LocalSemanticAlignment(nn.Module):
         fb = fb - torch.mean(fb, dim=(2, 3), keepdim=True)
 
         # vectorize (merge dim H, W) and normalize channelwise vectors
-        fa = fa.view(n, c, -1)  # n c hw
-        fb = fb.view(n, c, -1)  # n c hw
+        fa = fa.view(n, c, -1) # n c hw
+        fb = fb.view(n, c, -1)# n c hw
         fa = fa / torch.norm(fa, dim=1, keepdim=True)
         fb = fb / torch.norm(fb, dim=1, keepdim=True)
 
-        unalign_fb = unalign_fb.view(n, c2, -1)
-        aligned_fb = torch.zeros_like(unalign_fb)
+        unalign_fb=unalign_fb.view(n, c2, -1)
+        aligned_fb=torch.zeros_like(unalign_fb)
 
-        fa_parse = fa_parse.view(n, c1, -1)  # n c1 hw
-        fb_parse = fb_parse.view(n, c1, -1)  # n c1 hw
+        fa_parse = fa_parse.view(n, c1, -1)# n c1 hw
+        fb_parse = fb_parse.view(n, c1, -1)# n c1 hw
 
-        for i in range(1, c1):
-            a_index = torch.nonzero(fa_parse[:, i, :])
+        for i in range(1,c1):
+            a_index=torch.nonzero(fa_parse[:,i,:])
             b_index = torch.nonzero(fb_parse[:, i, :])
-            local_fa = fa[a_index[:, 0], :, a_index[:, 1]]  # np1 c
-            local_fa = local_fa.contiguous().view(n, -1, c).transpose(-2, -1)  # n c p1
-            local_fb = fb[b_index[:, 0], :, b_index[:, 1]]  # np2 c
-            local_fb = local_fb.contiguous().view(n, -1, c).transpose(-2, -1)  # n c p2
+            local_fa=fa[a_index[:,0],:,a_index[:,1]]#np1 c
+            local_fa=local_fa.contiguous().view(n,-1,c).transpose(-2,-1) # n c p1
+            local_fb = fb[b_index[:,0], :, b_index[:,1]]  # np2 c
+            local_fb = local_fb.contiguous().view(n, -1, c).transpose(-2, -1)# n c p2
             # print(local_fb.shape)
-            energy_ab_T = torch.bmm(local_fb.transpose(-2, -1), local_fa) * alpha  # n p2 c * n c p1 -> n p2 p1
+            energy_ab_T = torch.bmm(local_fb.transpose(-2, -1), local_fa) * alpha # n p2 c * n c p1 -> n p2 p1
             corr_ab_T = F.softmax(energy_ab_T, dim=1)  # n p2 c * n c p1 -> n p2 p1
-            local_unalign_fb = unalign_fb[b_index[:, 0], :, b_index[:, 1]]  # n c2 p2
+            local_unalign_fb=unalign_fb[b_index[:,0], :, b_index[:,1]]# n c2 p2
             local_unalign_fb = local_unalign_fb.contiguous().view(n, -1, c2).transpose(-2, -1)  # n c2 p2
-            local_aligned_fb = torch.bmm(local_unalign_fb.contiguous(), corr_ab_T)  # n c2 p2 * n p2 p1-> n c2 p1
-            local_aligned_fb = local_aligned_fb.transpose(-2, -1).view(-1, c2)
-            aligned_fb[a_index[:, 0], :, a_index[:, 1]] = local_aligned_fb
+            local_aligned_fb=torch.bmm(local_unalign_fb.contiguous(), corr_ab_T)# n c2 p2 * n p2 p1-> n c2 p1
+            local_aligned_fb=local_aligned_fb.transpose(-2, -1).view(-1, c2)
+            aligned_fb[a_index[:,0],:,a_index[:,1]]=local_aligned_fb
 
-        aligned_fb = aligned_fb.view(n, c2, h, w)
+        aligned_fb=aligned_fb.view(n, c2, h, w)
 
         return aligned_fb
 
-    def forward(self, unalign_fb, fa, fa_parse, fb, fb_parse):
-        unalign_fb_raw = unalign_fb
-        fa_parse = F.interpolate(fa_parse, size=fa.shape[-2:], mode='nearest')
+    def forward(self, unalign_fb,fa,fa_parse, fb,fb_parse):
+        unalign_fb_raw=unalign_fb
+        fa_parse=F.interpolate(fa_parse,size=fa.shape[-2:],mode='nearest')
         fb_parse = F.interpolate(fb_parse, size=fb.shape[-2:], mode='nearest')
-        unalign_fb = F.interpolate(unalign_fb, size=fb.shape[-2:], mode='bilinear', align_corners=True)
-        aligned_fb = self.warp(unalign_fb, fa, fa_parse, fb, fb_parse, self.softmax_alpha)
+        unalign_fb = F.interpolate(unalign_fb, size=fb.shape[-2:], mode='bilinear',align_corners=True)
+        aligned_fb= self.warp(unalign_fb,fa, fa_parse,fb,fb_parse, self.softmax_alpha)
         aligned_fb = F.interpolate(aligned_fb, size=unalign_fb_raw.shape[-2:], mode='bilinear', align_corners=True)
         return aligned_fb
+
+
+#
+# class LocalSemanticAlignment(nn.Module):
+#     """
+#     Local semantic alignment
+#     """
+#
+#     def __init__(self, parse_dim):
+#         super(LocalSemanticAlignment, self).__init__()
+#         self.parse_dim = parse_dim
+#         self.eps = 1e-5
+#         self.softmax_alpha = 100
+#         self.bilinear_64 = nn.UpsamplingBilinear2d(size=(64, 64))
+#         self.nearest_64 = nn.UpsamplingNearest2d(size=(64, 64))
+#
+#     def normalization(self, x):
+#         n, c, h, w = x.shape
+#         x_norm = x - torch.mean(x, dim=(2, 3), keepdim=True)
+#         x_norm = x_norm.view(n, c, -1)
+#         x_norm = x_norm / (torch.norm(x_norm, dim=1, keepdim=True) + self.eps)
+#         x_norm = x_norm.view(n, c, h, w)
+#         return x_norm
+#
+#     def local_alignment(self, source, source_mask, ref, ref_mask, ref_img=None):
+#         """
+#         Align Local Semantics, only batchsize=1 is supported
+#         :param source: source feature maps (B C H W)
+#         :param source_mask: one channel of parse of source image (B,H,W)
+#         :param ref: ref feature maps (B C H W)
+#         :param ref_mask:one channel of parse of ref image (B,H,W)
+#         :return:
+#         """
+#         n, c, h, w = source.shape
+#         assert source.shape == ref.shape
+#         assert n == 1
+#         source_idx = torch.nonzero(source_mask)
+#         source_points = source[source_idx[:, 0], :, source_idx[:, 1], source_idx[:, 2]]  # p1,c
+#         source_points = source_points.transpose(-2, -1)  # c,p1
+#         source_points = source_points.view(n, c, -1)  # n,c,p1
+#
+#         ref_idx = torch.nonzero(ref_mask)
+#         ref_points = ref[ref_idx[:, 0], :, ref_idx[:, 1], ref_idx[:, 2]]  # p2,c
+#         ref_points = ref_points.transpose(-2, -1) # c,p2
+#         ref_points = ref_points.view(n, c, -1)  # n,c,p2
+#
+#         energy_ab_T = torch.matmul(ref_points.transpose(-2, -1),
+#                                    source_points) * self.softmax_alpha  # n,p2,c * n,c,p1 -> n,p2,p1
+#         corr_ab_T = F.softmax(energy_ab_T, dim=1)  #
+#
+#         aligned_ref = torch.matmul(ref_points, corr_ab_T)  # n,c,p2*n,p2,p1-> n,c,p1
+#         if ref_img is not None:
+#             ref_img_points = ref_img[ref_idx[:, 0], :, ref_idx[:, 1], ref_idx[:, 2]]  # p2,c
+#             ref_img_points = ref_img_points.view(n, 3, -1)  # n,c,p2
+#             aligned_img_ref = torch.matmul(ref_img_points, corr_ab_T)  # n,c,p2*n,p2,p1-> n,c,p1
+#             return aligned_ref, source_idx, corr_ab_T, aligned_img_ref
+#         return aligned_ref, source_idx, corr_ab_T
+#
+#     def forward(self, source_f, source_parse, ref_f, ref_parse, ref_img=None):
+#         # first channels is background
+#
+#         n, c, h, w = source_f.shape
+#
+#         source_f = self.bilinear_64(source_f)
+#         source_parse = self.nearest_64(source_parse)
+#         source_f = self.normalization(source_f)
+#
+#         ref_f = self.bilinear_64(ref_f)
+#         ref_parse = self.nearest_64(ref_parse)
+#         ref_f = self.normalization(ref_f)
+#
+#         aligned_ref_f = source_f
+#         aligned_ref_img = torch.zeros(size=(n,3,64,64), device=ref_img.device)
+#         for i in range(1, self.parse_dim):
+#             if ref_img is not None:
+#                 ref_img = self.bilinear_64(ref_img)
+#                 local_aligned_ref_f, local_idx, local_corr, local_aligned_ref_img = self.local_alignment(source_f,
+#                                                                                                          source_parse[:,
+#                                                                                                          i, ::], ref_f,
+#                                                                                                          ref_parse[:, i,
+#                                                                                                          ::], ref_img)
+#                 local_aligned_ref_f = local_aligned_ref_f.view(-1, c)
+#                 local_aligned_ref_img = local_aligned_ref_img.view(-1, 3)
+#                 aligned_ref_f[local_idx[:, 0], :, local_idx[:, 1], local_idx[:, 2]] = local_aligned_ref_f
+#                 aligned_ref_img[local_idx[:, 0], :, local_idx[:, 1], local_idx[:, 2]] = local_aligned_ref_img
+#             else:
+#                 local_aligned_ref_f, local_idx, local_corr = self.local_alignment(source_f, source_parse[:, i, ::],
+#                                                                                   ref_f, ref_parse[:, i, ::])
+#                 local_aligned_ref_f = local_aligned_ref_f.view(-1, c)
+#                 aligned_ref_f[local_idx[:, 0], :, local_idx[:, 1], local_idx[:, 2]] = local_aligned_ref_f
+#
+#         if ref_img is not None:
+#             aligned_ref_f = F.interpolate(aligned_ref_f, size=(h, w), mode='bilinear', align_corners=True)
+#             aligned_ref_img = F.interpolate(aligned_ref_img, size=(h, w), mode='bilinear', align_corners=True)
+#             return aligned_ref_f, aligned_ref_img
+#         else:
+#             aligned_ref_f = F.interpolate(aligned_ref_f, size=(h, w), mode='bilinear', align_corners=True)
+#             return aligned_ref_f
 
 
 #############################################################
@@ -335,13 +432,8 @@ class MakeupInjection(nn.Module):
             nn.Conv2d(64, 64, 3, stride=1, padding=1),
         )
         self.last_block = nn.Sequential(
-            nn.Conv2d(64, 64, 3, stride=1, padding=1),
-            nn.LeakyReLU(negative_slope=0.2, inplace=True),
-            nn.Conv2d(64, 64, 3, stride=1, padding=1),
-            nn.LeakyReLU(negative_slope=0.2, inplace=True),
-            nn.Conv2d(64, 64, 3, stride=1, padding=1),
-            nn.LeakyReLU(negative_slope=0.2, inplace=True),
-            nn.Conv2d(64, 64, 3, stride=1, padding=1),
+            ResidualBlock(64,norm=False),
+            ResidualBlock(64,norm=False),
             nn.InstanceNorm2d(64),
             nn.LeakyReLU(negative_slope=0.2, inplace=True),
             nn.Conv2d(64, 3, 3, stride=1, padding=1),
