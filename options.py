@@ -30,7 +30,7 @@ class Options():
         self.parser.add_argument('--weight_corr', type=float, default=1, help='weight_corr')
         self.parser.add_argument('--weight_self_recL1', type=float, default=10, help='weight_self_recL1')
         self.parser.add_argument('--weight_color', type=float, default=50, help='weight_color')
-        self.parser.add_argument('--weight_identity', type=float, default=0.1, help='weight_identity')
+        self.parser.add_argument('--weight_identity', type=float, default=0.5, help='weight_identity')
         self.parser.add_argument('--weight_adv', type=float, default=2, help='weight_adv')
 
         # training related
