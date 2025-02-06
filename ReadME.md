@@ -6,9 +6,6 @@ This is the official pytorch code for **"FPMT: Fast and Precise High-Resolution 
 
 ## In this paper, we focus on accelerating high-resolution makeup transfer process without compromising generative performance.
 
-## Author
-**Zhaoyang Sun;  Shengwu Xiong; Yaxiong Chen; Yi Rong**
-
 
 ## News
 
