@@ -263,51 +263,111 @@ class LocalSemanticAlignment(nn.Module):
     def __init__(self, ):
         super(LocalSemanticAlignment, self).__init__()
         self.softmax_alpha = 100
-
+    
     def warp(self, unalign_fb, fa, fa_parse, fb, fb_parse, alpha):
         '''
-            calculate correspondence matrix and warp the exemplar features
+        Calculate correspondence matrix and warp the exemplar features without loops.
         '''
-        assert fa.shape == fb.shape, \
-            'Feature shape must match. Got %s in a and %s in b)' % (fa.shape, fb.shape)
+        assert fa.shape == fb.shape, 'Feature shape must match. Got %s in a and %s in b)' % (fa.shape, fb.shape)
         n, c, h, w = fa.shape
         _, c1, _, _ = fa_parse.shape
         _, c2, _, _ = unalign_fb.shape
-        # subtract mean
+
+        # Subtract mean
         fa = fa - torch.mean(fa, dim=(2, 3), keepdim=True)
         fb = fb - torch.mean(fb, dim=(2, 3), keepdim=True)
 
-        # vectorize (merge dim H, W) and normalize channelwise vectors
+        # Vectorize and normalize
         fa = fa.view(n, c, -1)  # n c hw
-        fb = fb.view(n, c, -1)  # n c hw
+        fb = fb.view(n, c, -1)
         fa = fa / torch.norm(fa, dim=1, keepdim=True)
         fb = fb / torch.norm(fb, dim=1, keepdim=True)
 
         unalign_fb = unalign_fb.view(n, c2, -1)
         aligned_fb = torch.zeros_like(unalign_fb)
 
-        fa_parse = fa_parse.view(n, c1, -1)  # n c1 hw
-        fb_parse = fb_parse.view(n, c1, -1)  # n c1 hw
+        fa_parse = fa_parse.view(n, c1, -1)
+        fb_parse = fb_parse.view(n, c1, -1)
 
-        for i in range(1, c1):
-            a_index = torch.nonzero(fa_parse[:, i, :])
-            b_index = torch.nonzero(fb_parse[:, i, :])
-            local_fa = fa[a_index[:, 0], :, a_index[:, 1]]  # np1 c
-            local_fa = local_fa.contiguous().view(n, -1, c).transpose(-2, -1)  # n c p1
-            local_fb = fb[b_index[:, 0], :, b_index[:, 1]]  # np2 c
-            local_fb = local_fb.contiguous().view(n, -1, c).transpose(-2, -1)  # n c p2
-            # print(local_fb.shape)
-            energy_ab_T = torch.bmm(local_fb.transpose(-2, -1), local_fa) * alpha  # n p2 c * n c p1 -> n p2 p1
-            corr_ab_T = F.softmax(energy_ab_T, dim=1)  # n p2 c * n c p1 -> n p2 p1
-            local_unalign_fb = unalign_fb[b_index[:, 0], :, b_index[:, 1]]  # n c2 p2
-            local_unalign_fb = local_unalign_fb.contiguous().view(n, -1, c2).transpose(-2, -1)  # n c2 p2
-            local_aligned_fb = torch.bmm(local_unalign_fb.contiguous(), corr_ab_T)  # n c2 p2 * n p2 p1-> n c2 p1
-            local_aligned_fb = local_aligned_fb.transpose(-2, -1).view(-1, c2)
-            aligned_fb[a_index[:, 0], :, a_index[:, 1]] = local_aligned_fb
+        # Process all classes simultaneously
+        # Create masks for valid classes (excluding background)
+        mask_a = fa_parse[:, 1:, :].bool()  # n (c1-1) hw
+        mask_b = fb_parse[:, 1:, :].bool()
 
+        # Expand dimensions for batch operations
+        fa_exp = fa.unsqueeze(1)  # n 1 c hw
+        fb_exp = fb.unsqueeze(1)  # n 1 c hw
+
+        # Compute local features for all classes
+        # Using broadcasting to handle different class masks
+        local_fa = fa_exp * mask_a.unsqueeze(2)  # n (c1-1) c hw
+        local_fb = fb_exp * mask_b.unsqueeze(2)
+
+        # Compute energy matrices for all classes
+        energy = torch.matmul(local_fb.transpose(2, 3), local_fa) * alpha  # n (c1-1) hw hw
+        corr = F.softmax(energy, dim=2)  # Softmax along the second hw dimension
+
+        # Warp features for all classes
+        unalign_exp = unalign_fb.unsqueeze(1)  # n 1 c2 hw
+        warped = torch.matmul(unalign_exp, corr)  # n (c1-1) c2 hw
+
+        # Combine results using masks
+        # Weight each class contribution and sum
+        combined = (warped * mask_a.unsqueeze(2)).sum(dim=1)  # n c2 hw
+
+        # Normalize by number of contributing classes
+        norm_factor = mask_a.sum(dim=1, keepdim=True).clamp(min=1)  # n 1 hw
+        aligned_fb = combined / norm_factor
+
+        # Reshape to original dimensions
         aligned_fb = aligned_fb.view(n, c2, h, w)
-
         return aligned_fb
+
+
+    # def warp(self, unalign_fb, fa, fa_parse, fb, fb_parse, alpha):
+    #     '''
+    #         calculate correspondence matrix and warp the exemplar features
+    #     '''
+    #     assert fa.shape == fb.shape, \
+    #         'Feature shape must match. Got %s in a and %s in b)' % (fa.shape, fb.shape)
+    #     n, c, h, w = fa.shape
+    #     _, c1, _, _ = fa_parse.shape
+    #     _, c2, _, _ = unalign_fb.shape
+    #     # subtract mean
+    #     fa = fa - torch.mean(fa, dim=(2, 3), keepdim=True)
+    #     fb = fb - torch.mean(fb, dim=(2, 3), keepdim=True)
+
+    #     # vectorize (merge dim H, W) and normalize channelwise vectors
+    #     fa = fa.view(n, c, -1)  # n c hw
+    #     fb = fb.view(n, c, -1)  # n c hw
+    #     fa = fa / torch.norm(fa, dim=1, keepdim=True)
+    #     fb = fb / torch.norm(fb, dim=1, keepdim=True)
+
+    #     unalign_fb = unalign_fb.view(n, c2, -1)
+    #     aligned_fb = torch.zeros_like(unalign_fb)
+
+    #     fa_parse = fa_parse.view(n, c1, -1)  # n c1 hw
+    #     fb_parse = fb_parse.view(n, c1, -1)  # n c1 hw
+
+    #     for i in range(1, c1):
+    #         a_index = torch.nonzero(fa_parse[:, i, :])
+    #         b_index = torch.nonzero(fb_parse[:, i, :])
+    #         local_fa = fa[a_index[:, 0], :, a_index[:, 1]]  # np1 c
+    #         local_fa = local_fa.contiguous().view(n, -1, c).transpose(-2, -1)  # n c p1
+    #         local_fb = fb[b_index[:, 0], :, b_index[:, 1]]  # np2 c
+    #         local_fb = local_fb.contiguous().view(n, -1, c).transpose(-2, -1)  # n c p2
+    #         # print(local_fb.shape)
+    #         energy_ab_T = torch.bmm(local_fb.transpose(-2, -1), local_fa) * alpha  # n p2 c * n c p1 -> n p2 p1
+    #         corr_ab_T = F.softmax(energy_ab_T, dim=1)  # n p2 c * n c p1 -> n p2 p1
+    #         local_unalign_fb = unalign_fb[b_index[:, 0], :, b_index[:, 1]]  # n c2 p2
+    #         local_unalign_fb = local_unalign_fb.contiguous().view(n, -1, c2).transpose(-2, -1)  # n c2 p2
+    #         local_aligned_fb = torch.bmm(local_unalign_fb.contiguous(), corr_ab_T)  # n c2 p2 * n p2 p1-> n c2 p1
+    #         local_aligned_fb = local_aligned_fb.transpose(-2, -1).view(-1, c2)
+    #         aligned_fb[a_index[:, 0], :, a_index[:, 1]] = local_aligned_fb
+
+    #     aligned_fb = aligned_fb.view(n, c2, h, w)
+
+    #     return aligned_fb
 
     def forward(self, unalign_fb, fa, fa_parse, fb, fb_parse):
         unalign_fb_raw = unalign_fb
